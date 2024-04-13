@@ -3,77 +3,104 @@ package com.calmkin.WebServer.MultiThread;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
+import java.nio.channels.*;
 import java.util.Iterator;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.calmkin.util.ByteBufferUtil.debugRead;
 
-public class MultiThreadServer
-{
+public class MultiThreadServer {
     public static void main(String[] args) throws IOException {
+        new BossEventLoop().register();
+    }
 
-        // 设置线程名称
-        Thread.currentThread().setName("boss");
-        ServerSocketChannel ssc = ServerSocketChannel.open();
-        ssc.configureBlocking(false);
+    static class BossEventLoop implements Runnable {
 
-        ssc.bind(new InetSocketAddress(8080));
+        private Selector boss;
+        private WorkerEventLoop[] wokers;
 
-        Selector boss = Selector.open();
+        private volatile boolean started = false;
 
-        SelectionKey sscKey = ssc.register(boss, 0, null);
-        sscKey.interestOps(SelectionKey.OP_ACCEPT);
+        AtomicInteger index = new AtomicInteger();
 
+        public void register() throws IOException {
+            if (!started) {
+                // 初始化服务器Socket
+                ServerSocketChannel ssc = ServerSocketChannel.open();
+                ssc.bind(new InetSocketAddress(8080));
+                ssc.configureBlocking(false);
 
-        // 创建固定数量的Worker来处理读写请求
-        Worker[] workers = new Worker[2];
+                // 初始化Selector
+                boss = Selector.open();
 
-        for (int i = 0; i < workers.length; i++) {
-            workers[i] = new Worker("Worker-" + i);
+                // 注册事件
+                SelectionKey sscKey = ssc.register(boss, 0, null);
+                sscKey.interestOps(SelectionKey.OP_ACCEPT);
+
+                // 初始化Worker
+                wokers = initEventLoops();
+
+                // 启动Boss线程
+                new Thread(this, "boss").start();
+
+                started = true;
+            }
         }
 
-        AtomicInteger idx = new AtomicInteger();
+        private WorkerEventLoop[] initEventLoops() {
+            // 创建和核数相同个数的Worker
+            WorkerEventLoop[] eventLoops = new WorkerEventLoop[Runtime.getRuntime().availableProcessors()];
 
-        while(true)
-        {
-            boss.select();
-            Iterator<SelectionKey> iter = boss.selectedKeys().iterator();
+            for (int i = 0; i < eventLoops.length; i++) {
+                eventLoops[i] = new WorkerEventLoop("Worker-" + i);
+            }
 
-            while(iter.hasNext())
-            {
-                SelectionKey key = iter.next();
-                iter.remove();
+            return eventLoops;
+        }
 
-                if(key.isAcceptable())
-                {
-                    SocketChannel sc = ssc.accept();
-                    sc.configureBlocking(false);
+        @Override
+        public void run() {
+            while (true) {
+                try {
+                    boss.select();
+                    Iterator<SelectionKey> iter = boss.selectedKeys().iterator();
 
-                    // 将读写请求交给Worker
-                    // 这里采用round robin的负载均衡算法进行任务派发
-                    workers[idx.getAndIncrement() % workers.length ].register(sc);
+                    while (iter.hasNext()) {
+                        SelectionKey key = iter.next();
+                        iter.remove();
 
+                        // 建立连接事件发生之后
+                        if (key.isAcceptable()) {
+                            SocketChannel sc = (SocketChannel) key.channel();
+                            sc.configureBlocking(false);
+
+                            // 将读写请求交给Worker
+                            // 这里采用round robin的负载均衡算法进行任务派发
+                            wokers[index.getAndIncrement() % wokers.length].register(sc);
+
+                        }
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
             }
         }
     }
 
-    static class Worker implements Runnable{
+    static class WorkerEventLoop implements Runnable {
 
         private String name;
         private Thread thread;
-        private Selector selector;
+        private Selector worker;
 
         // 为了保证多次调用register, 线程和selector只会初始化一次
         private volatile boolean inited = false;
 
+        // 用于保存注册事件的任务
+        private final ConcurrentLinkedQueue<Runnable> tasks = new ConcurrentLinkedQueue<>();
 
-
-        public Worker(String name) {
+        public WorkerEventLoop(String name) {
             this.name = name;
         }
 
@@ -83,13 +110,22 @@ public class MultiThreadServer
             if (!inited) {
                 thread = new Thread(name);
                 thread.start();
-                selector = Selector.open();
+                worker = Selector.open();
                 inited = true;
             }
 
             // 因为一开始没有事件，所以需要执行wakeup保证继续执行注册事件
-            selector.wakeup();
-            sc.register(selector, SelectionKey.OP_READ, null);
+            tasks.add(()->{
+                try {
+                    SelectionKey scKey = sc.register(worker, SelectionKey.OP_READ, null);
+                } catch (ClosedChannelException e) {
+                    e.printStackTrace();
+                }
+
+            });
+
+            worker.wakeup();
+
         }
 
 
@@ -97,17 +133,22 @@ public class MultiThreadServer
         @Override
         public void run() {
             try {
-                selector.select();
+                worker.select();
 
-                Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
-
-                while(iter.hasNext())
+                // 如果有注册任务
+                Runnable task = tasks.poll();
+                if(task != null)
                 {
+                    task.run();
+                }
+
+                Iterator<SelectionKey> iter = worker.selectedKeys().iterator();
+
+                while (iter.hasNext()) {
                     SelectionKey key = iter.next();
                     iter.remove();
 
-                    if(key.isReadable())
-                    {
+                    if (key.isReadable()) {
                         SocketChannel sc = (SocketChannel) key.channel();
                         ByteBuffer buffer = ByteBuffer.allocate(16);
                         buffer.flip();
