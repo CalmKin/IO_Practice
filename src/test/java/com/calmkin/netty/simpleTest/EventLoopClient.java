@@ -17,10 +17,13 @@ import java.util.Scanner;
 @Slf4j
 public class EventLoopClient {
     public static void main(String[] args) throws InterruptedException {
+
+        NioEventLoopGroup eventLoopGroup = new NioEventLoopGroup();
+
         // 启动类
         ChannelFuture channelFuture = new Bootstrap()
                 // 添加eventLoop，处理服务端发送的数据
-                .group(new NioEventLoopGroup())
+                .group(eventLoopGroup)
                 // 选择客户端channel实现
                 .channel(NioSocketChannel.class)
                 // 添加处理器
@@ -79,16 +82,21 @@ public class EventLoopClient {
         ChannelFuture closeFuture = channel.closeFuture();
 
         // 方式一：主线程同步等待channel关闭，然后进行善后工作
-        closeFuture.sync();
-        log.debug("善后工作。。。。");
+//        closeFuture.sync();
+//        log.debug("善后工作。。。。");
 
         // 方式二：添加回调钩子，等NIO线程关闭连接之后，再由NIO线程调用回调钩子
-//        closeFuture.addListener(new ChannelFutureListener() {
-//            @Override
-//            public void operationComplete(ChannelFuture channelFuture) throws Exception {
-//                log.debug("善后工作");
-//            }
-//        });
+        closeFuture.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture channelFuture) throws Exception {
+                log.debug("善后工作");
+
+                // 此时EventLoopGroup里面可能还有线程在执行任务
+                // 我们要等这些线程执行完毕，然后再关闭线程池
+                // 所以调用的是shutdownGracefully
+                eventLoopGroup.shutdownGracefully();
+            }
+        });
 
 
     }
