@@ -31,6 +31,8 @@ public class EventLoopServer {
                                     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
                                         ByteBuf buf = (ByteBuf) msg;
                                         log.debug(buf.toString(StandardCharsets.UTF_8) );
+                                        // 必须要调用这个方法,才能将上下文传递给下一个handler
+                                        ctx.fireChannelRead(msg);
                                     }
                                 }).addLast(group,"耗时-Group",new ChannelInboundHandlerAdapter(){
                                     @Override                                       // 如果没有指定解码器。那么这里得到的是byteBuf
