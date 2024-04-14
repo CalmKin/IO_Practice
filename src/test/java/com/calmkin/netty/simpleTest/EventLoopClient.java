@@ -8,9 +8,13 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.string.StringEncoder;
+import io.netty.handler.logging.LoggingHandler;
+import lombok.extern.slf4j.Slf4j;
 
 import java.net.InetSocketAddress;
+import java.util.Scanner;
 
+@Slf4j
 public class EventLoopClient {
     public static void main(String[] args) throws InterruptedException {
         // 启动类
@@ -25,6 +29,8 @@ public class EventLoopClient {
                         new ChannelInitializer<NioSocketChannel>() {
                             @Override
                             protected void initChannel(NioSocketChannel nioSocketChannel) throws Exception {
+                                // 添加输出日志的处理器
+                                nioSocketChannel.pipeline().addLast(new LoggingHandler());
                                 // 客户端对字符串进行编码（把字符串转为ByteBuf）
                                 // 服务端对字符串进行解码
                                 nioSocketChannel.pipeline().addLast(new StringEncoder());
@@ -38,23 +44,52 @@ public class EventLoopClient {
         // 方式一：阻塞方法，直到连接建立
         channelFuture.sync();
         Channel channel = channelFuture.channel();// 代表的是客户端和服务端的连接对象SocketChannel
-        channel.writeAndFlush("123456");
 
 
         // 方式二：添加回调钩子，等连接建立好之后，执行后续操作
-        channelFuture.addListener(new ChannelFutureListener() {
-            // nio线程建立好连接之后，会调用operationComplete方法
-            @Override
-            public void operationComplete(ChannelFuture channelFuture) throws Exception {
-                Channel channel = channelFuture.channel();// 代表的是客户端和服务端的连接对象SocketChannel
-                channel.writeAndFlush("123456");
+//        channelFuture.addListener(new ChannelFutureListener() {
+//            // nio线程建立好连接之后，会调用operationComplete方法
+//            @Override
+//            public void operationComplete(ChannelFuture channelFuture) throws Exception {
+//                Channel channel = channelFuture.channel();// 代表的是客户端和服务端的连接对象SocketChannel
+//                channel.writeAndFlush("123456");
+//            }
+//        });
+
+
+        // 需求：控制台接收用户输入，然后发送给服务端，当不想发送的时候，输入一个Q，断开连接
+        new Thread(
+            () -> {
+                while(true)
+                {
+                    Scanner scanner = new Scanner(System.in);
+                    String line = scanner.nextLine();
+
+                    if("q".equals(line))
+                    {
+                        log.debug("关闭连接");
+                        channel.close();
+                        break;
+                    }
+                    channel.writeAndFlush(line);
+                }
             }
-        });
+        ,"input").start();
 
+        ChannelFuture closeFuture = channel.closeFuture();
 
-        // 向服务器发数据（无论收发数据，都会走handler）
-        System.out.println(channel);
-        System.out.println("");
+        // 方式一：主线程同步等待channel关闭，然后进行善后工作
+        closeFuture.sync();
+        log.debug("善后工作。。。。");
+
+        // 方式二：添加回调钩子，等NIO线程关闭连接之后，再由NIO线程调用回调钩子
+//        closeFuture.addListener(new ChannelFutureListener() {
+//            @Override
+//            public void operationComplete(ChannelFuture channelFuture) throws Exception {
+//                log.debug("善后工作");
+//            }
+//        });
+
 
     }
 }
