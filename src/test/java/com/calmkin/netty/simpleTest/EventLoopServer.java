@@ -17,7 +17,8 @@ import java.nio.charset.StandardCharsets;
 public class EventLoopServer {
     public static void main(String[] args) {
         new ServerBootstrap()
-                .group(new NioEventLoopGroup())
+                // 指定前一个作为Boss，处理Accept事件，后一个作为Worker，处理读写事件
+                .group(new NioEventLoopGroup(), new NioEventLoopGroup())
                 .channel(NioServerSocketChannel.class)
                 .childHandler(
                         new ChannelInitializer<NioSocketChannel>() {
