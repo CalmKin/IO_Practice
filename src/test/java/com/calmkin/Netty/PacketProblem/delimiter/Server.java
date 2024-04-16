@@ -1,11 +1,15 @@
-package com.calmkin.Netty.PacketProblem.fixedLength;
+package com.calmkin.Netty.PacketProblem.delimiter;
 
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.*;
+import io.netty.channel.AdaptiveRecvByteBufAllocator;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.FixedLengthFrameDecoder;
+import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import org.slf4j.Logger;
@@ -25,8 +29,9 @@ public class Server {
             serverBootstrap.childHandler(new ChannelInitializer<SocketChannel>() {
                 @Override
                 protected void initChannel(SocketChannel ch) throws Exception {
-                    // 添加固定长度解码器
-                    ch.pipeline().addLast(new FixedLengthFrameDecoder(8));
+                    // 添加换行符帧分割解码器
+                    // 如果读取1024个字节还没遇到换行符，就会抛出异常
+                    ch.pipeline().addLast(new LineBasedFrameDecoder(1024));
                     ch.pipeline().addLast(new LoggingHandler(LogLevel.DEBUG));
                 }
             });
